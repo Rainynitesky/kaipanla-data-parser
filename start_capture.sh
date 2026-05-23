@@ -6,7 +6,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-MITM_SCRIPT="$SCRIPT_DIR/mitm_simple.py"
+MITM_SCRIPT="$SCRIPT_DIR/mitm_capture.py"
 ADB="/Applications/MuMuPlayer.app/Contents/MacOS/MuMuEmulator.app/Contents/MacOS/tools/adb"
 
 # ⚠️ 关键：MuMu 模拟器访问 Mac 主机必须用 10.0.2.2，不能用 127.0.0.1

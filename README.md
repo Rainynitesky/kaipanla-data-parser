@@ -2,7 +2,9 @@
 
 ## 项目目标
 
-抓取开盘啦App(com.aiyu.kaipanla)的**267个板块行情数据**及**672个板块-个股关联数据**（477子板块+195无子板块主板块），保存为JSON。
+抓取开盘啦App(com.aiyu.kaipanla)的**板块行情数据**及**板块-个股关联数据**，输出为CSV。
+
+板块列表通过 RealRankingInfo API 动态分页获取（不再依赖静态 kaipanla-plates-267.json 文件），数量随市场变化。
 
 ---
 
@@ -13,7 +15,7 @@
 - 完整267板块（含概念板块）通过**TCP Socket + TLS + Protobuf**传输
 - Socket服务器: `124.71.166.244:14000`, `1.94.128.64:14000`, `60.204.212.123:14000`
 - IP获取接口: `getsockip.longhuvip.com/getIPList?UserID=...&Token=...` (HTTP, 已验证可用)
-- 267板块ID→名称映射已保存至: `~/.hermes/skills/reverse-engineering/android-app-reverse/references/kaipanla-plates-267.json`
+- 板块列表已通过 RealRankingInfo API 动态获取，无需静态映射文件
 
 ### 1.2 Socket协议栈
 ```
@@ -59,8 +61,7 @@ App → AES加密(protobuf数据) → TLS加密 → TCP → 服务器
 | frida-dexdump运行时脱壳 | ✅ | 41个DEX（已清理） |
 | 从脱壳DEX提取Protobuf定义 | ✅ | proto/*.proto |
 | getIPList劫持+TCP代理拦截Socket | ✅ | tcp_proxy_raw.py收到TLS ClientHello |
-| HTTP API获取267板块数据 | ✅ | data/plates/ (267板块, 含盘口/爆发原因) |
-| HTTP API获取子板块+个股数据 | ✅ | data/sub_plates/ (672板块, 含个股列表) |
+| HTTP API动态获取板块数据 | ✅ | data/ (板块+个股, CSV格式) |
 
 ---
 
@@ -245,12 +246,10 @@ circularCaptital(9), yearPE(10), nextYearPE(11)
 
 | 路径 | 内容 |
 |------|------|
-| data/plates/plates_2026-05-08.json | **267个板块完整数据**(强度/成交额/主力/涨停封单/大单封单/换手率/上涨下跌/爆发原因/子板块) |
-| data/plates/plates_2026-05-08_summary.csv | 267板块汇总CSV |
-| data/sub_plates/sub_plates_2026-05-08.json | **672个板块-个股数据**(477子板块+195无子板块主板块, 含个股列表) |
-| data/sub_plates/sub_plates_2026-05-08_summary.csv | 板块-个股汇总CSV |
-| data/index/ | 首页/58板块历史数据 |
-| captures/ | mitmproxy抓包原始数据 |
+| data/main_plate_info_{date}.csv | **主板块汇总**（强度/成交额/主力/涨停封单/大单封单/换手率/上涨下跌/爆发原因，merge 4 组数据） |
+| data/sub_plate_info_{date}.csv | **子板块关联**（父代码/子代码/子板块名/子板块强度） |
+| data/stock_info_{date}.csv | **个股详情**（代码/名称/价格/涨幅/成交额/主力/换手率/量比/封单/市值/PE 等 63 字段） |
+| captures/ | mitmproxy 抓包原始数据（用于 token 刷新） |
 
 ---
 
@@ -271,46 +270,39 @@ circularCaptital(9), yearPE(10), nextYearPE(11)
 - Java.perform不可用 / Native hook不可用
 
 ### mitmproxy
-- 版本: 9.0.1
-- 虚拟环境: `/Users/yixin/.openclaw/workspace/tcp_grabber/venv_tcp/`
 - CA证书: `~/.mitmproxy/mitmproxy-ca.pem`
+- 抓包脚本: `mitm_capture.py`（项目根目录下）
+- 启动命令: `mitmdump -s mitm_capture.py --listen-port 8080`
 - **⚠️ protobuf版本冲突**: 修复: `pip install protobuf==4.25.9 typing-extensions==4.4.0`
 
 ### Python
-- 系统Python: 3.9
-- venv: `/Users/yixin/.openclaw/workspace/tcp_grabber/venv_tcp/` (含frida+mitmproxy)
+- 依赖: requests, pandas, akshare, mitmproxy
+- 运行: 直接 `python3 crawler_batch.py` 或在 Jupyter/Notebook 中 import 调用
 
 ---
 
 ## 8. 脚本清单
 
-### 8.1 调度脚本（推荐）
+### 8.1 核心抓取脚本
 
 | 脚本 | 用途 | 状态 |
 |------|------|------|
-| daily_grab.py | **统一调度脚本**：按天循环抓取 plates+sub_plates，自动检测 token 过期，断点续传 | ✅ 新增 |
+| crawler_batch.py | **批量爬虫（并行）**：token校验/刷新 + 交易日获取 + 并行抓取板块+个股数据，输出CSV | ✅ 推荐 |
+| crawler_raw.py | 原版串行爬虫：逐板块串行抓取，硬编码日期和Token，输出CSV | ✅ 可用（调试参考） |
 
-### 8.2 核心抓取脚本
-
-| 脚本 | 用途 | 状态 |
-|------|------|------|
-| scripts/grab_plates.py | 267 板块批量抓取 (含盘口/爆发原因) | ✅ 267/267 成功 |
-| scripts/grab_sub_plates.py | 672 板块 - 个股批量抓取 (477 子板块 +195 主板块，含个股列表，Type 0~19 遍历合并去重) | 🔄 进行中 |
-| scripts/fetch_index.py | 首页数据爬虫 | ✅ 可用 |
-
-### 8.3 抓包/代理脚本（推荐）
+### 8.2 抓包/代理脚本
 
 **一键启动/停止（推荐）：**
 
 | 脚本 | 用途 | 状态 |
 |------|------|------|
-| `scripts/start_capture.sh` | **一键启动抓包**：自动配置代理 (10.0.2.2:8080) + 启动 mitmproxy | ✅ 终极正确版 |
-| `scripts/stop_capture.sh` | **一键停止抓包**：清理进程 + 关闭代理 | ✅ 终极正确版 |
+| `start_capture.sh` | **一键启动抓包**：自动配置代理 (10.0.2.2:8080) + 启动 mitmproxy | ✅ |
+| `stop_capture.sh` | **一键停止抓包**：清理进程 + 关闭代理 | ✅ |
 
 **使用方法：**
 ```bash
 # 启动抓包
-cd /Users/yixin/agent_project/开盘啦_数据解析/scripts
+cd /Users/yixin/agent_project/开盘啦_数据解析
 ./start_capture.sh
 
 # 在 MuMu 模拟器中打开 开盘啦 App 并操作
@@ -323,21 +315,15 @@ cd /Users/yixin/agent_project/开盘啦_数据解析/scripts
 - 代理地址必须是 `10.0.2.2:8080`（MuMu 网关 = Mac 主机）
 - **不能用** `127.0.0.1:8080`（模拟器内 127.0.0.1 指向自己，会导致网络受限）
 
----
-
-### 8.4 抓包/代理脚本（底层）
+### 8.3 mitmproxy 抓包脚本
 
 | 脚本 | 用途 | 状态 |
 |------|------|------|
-| scripts/mitm_simple.py | **简化版抓包脚本**：保存所有 HTTP/HTTPS 流量，无过滤 | ✅ 推荐 |
-| scripts/mitm_capture.py | mitmproxy 抓包 (HTTPS API) | ✅ 可用 |
-| scripts/mitm_intercept.py | mitmproxy 劫持 getIPList+ 抓包 | ✅ 可用 |
-| scripts/tcp_proxy_raw.py | 纯 TCP 转发代理 | ✅ 已验证 |
-| scripts/tcp_proxy_mitm.py | TLS 中间人代理 | ⚠️ 待测试 |
+| mitm_capture.py | **统一版抓包脚本**：过滤 longhuvip 域名，保存到 captures/，可选 SOCKET_HIJACK 劫持 getIPList，用于 crawler_batch.py 的 token 自动刷新 | ✅ 推荐 |
 
 ---
 
-## 8.5 daily_grab.py 使用说明
+## 8.4 crawler_batch.py 使用说明
 
 ### 前置配置
 
@@ -351,63 +337,67 @@ KPL_DEVICE_ID=你的设备 ID
 ### 基本用法
 
 ```bash
-# 抓取今天的数据（推荐）
-python3 daily_grab.py --date 2026-05-14
+# 抓取指定日期范围（推荐）
+python3 crawler_batch.py --start 2026-05-01 --end 2026-05-15
 
-# 批量抓取日期范围（自动跳过周末）
-python3 daily_grab.py --start-date 2026-05-01 --end-date 2026-05-14
-
-# 强制重新抓取（覆盖已有数据）
-python3 daily_grab.py --force --date 2026-05-08
-
-# 只抓 plates 不抓 sub_plates
-python3 daily_grab.py --skip-sub-plates --date 2026-05-14
+# 只抓最近一个交易日
+python3 crawler_batch.py
 
 # 自定义并发线程数和请求间隔
-python3 daily_grab.py --workers 5 --delay 0.1 --date 2026-05-14
+python3 crawler_batch.py --start 2026-05-01 --end 2026-05-15 --workers 5 --delay 0.1
+```
+
+或在 Python 中直接调用：
+```python
+from crawler_batch import main
+main(start_date="2026-05-01", end_date="2026-05-15", delay=0.05, workers=10)
 ```
 
 ### 工作流程
 
 ```
-daily_grab.py 按天循环:
-├── 检查 token 是否过期 → 过期则暂停并提示手动更新
-├── 检查该日期数据是否已存在 → 存在则跳过
-├── 执行 grab_plates.py (267 板块)
-│   └── 输出：data/plates/plates_{date}.json
-└── 执行 grab_sub_plates.py (子板块 + 个股)
-    └── 输出：data/sub_plates/sub_plates_{date}.json
+crawler_batch.py 按天循环:
+├── 加载 .env 中的认证参数
+├── 验证 token → 过期则自动启动 mitmproxy 抓包刷新
+├── 获取交易日列表（akshare）
+├── 对每个交易日:
+│   ├── 阶段1：串行分页 RealRankingInfo → 动态获取板块列表
+│   ├── 阶段2：并行抓取板块数据 (PlateInfo_QJ + PanKou + BoomReason + SonPlate)
+│   ├── 阶段3：并行抓取成分股 (ZhiShuStockList_W8)
+│   └── 阶段4：构建 DataFrame → 输出 3 个 CSV
+│       ├── data/main_plate_info_{date}.csv  (主板块汇总)
+│       ├── data/sub_plate_info_{date}.csv   (子板块关联)
+│       └── data/stock_info_{date}.csv       (个股详情)
 ```
 
 ### Token 过期处理
 
-脚本会自动检测 token 是否过期。如果过期，会：
-1. 打印错误信息
-2. 暂停执行
-3. 提示你手动更新 `.env` 文件中的 `KPL_TOKEN`
-4. 询问是否继续（输入 y 继续，其他退出）
+脚本自动检测 token 是否过期。过期时：
+1. 自动启动 mitm_capture.py（mitmproxy 抓包）
+2. 轮询 captures/ 目录等待新 Token
+3. 从捕获数据中提取新 UserID 和 Token
+4. 自动更新 .env 文件
+5. 继续执行抓取
 
-**如何获取新 token：**
+**如何获取新 token（手动方式）：**
 1. 在 MuMu 模拟器中打开 App 并登录
-2. 启动 mitmproxy 抓包
+2. 运行 `./start_capture.sh` 启动抓包
 3. 从抓包数据中找到新的 Token 值
 4. 更新 `.env` 文件
-5. 重新运行 `python3 daily_grab.py`
+5. 重新运行 `python3 crawler_batch.py`
 
 ### 断点续传
 
-脚本会自动检查 `data/{plates,sub_plates}/plates_{date}.json` 是否存在：
-- 已存在 → 自动跳过
-- 使用 `--force` 参数可强制覆盖
+脚本会自动检查 `data/main_plate_info_{date}.csv` 是否存在：
+- 已存在 → 自动跳过该日期
+- 目前不支持 `--force` 覆盖，需手动删除已有 CSV 后重新运行
 
 ### 日志输出
 
-每天抓取完成后会生成独立日志文件：
-```
-logs/daily_grab_2026-05-14.log
-```
-
-日志包含：日期、token 状态、抓取结果、时间戳等。
+控制台实时输出抓取进度，包括：
+- 板块数量、token 状态、每个板块的抓取结果
+- 并发线程执行情况
+- 失败重试记录
 
 ---
 
@@ -436,30 +426,17 @@ logs/daily_grab_2026-05-14.log
 ```
 开盘啦_数据解析/
 ├── README.md                    # 本文件（项目文档）
-├── daily_grab.py                # 统一调度脚本（按天循环抓取，自动检测 token）
+├── crawler_batch.py             # 批量爬虫（并行，token自动刷新，推荐使用）
+├── crawler_raw.py               # 原版串行爬虫（硬编码日期和Token，调试参考）
+├── mitm_capture.py              # mitmproxy 抓包脚本（域名过滤 + 可选 SOCKET_HIJACK）
+├── aes.min.js                   # AES 加密 JS（App 加密逻辑参考）
+├── start_capture.sh             # 一键启动抓包（自动配置代理 + 启动 mitmproxy）
+├── stop_capture.sh              # 一键停止抓包（清理进程 + 关闭代理）
 ├── .env                         # 认证配置（KPL_TOKEN/KPL_USER_ID/KPL_DEVICE_ID）
-├── scripts/                     # 所有脚本
-│   ├── start_capture.sh         # **一键启动抓包**（推荐）
-│   ├── stop_capture.sh          # **一键停止抓包**（推荐）
-│   ├── mitm_simple.py           # 简化版抓包脚本（保存所有流量）
-│   ├── mitm_intercept.py        # 劫持 getIPList+ 抓包
-│   ├── mitm_capture.py          # mitmproxy 抓包 (HTTPS)
-│   ├── grab_plates.py           # 267 板块批量抓取 (核心脚本)
-│   ├── grab_sub_plates.py       # 672 板块 - 个股批量抓取 (含个股，Type 遍历)
-│   ├── fetch_index.py           # 首页数据爬虫
-│   ├── tcp_proxy_raw.py         # 纯 TCP 转发代理
-│   └── tcp_proxy_mitm.py        # TLS 中间人代理
-├── proto/                       # Protobuf 协议定义
-│   ├── kpl.proto                # 合并后的 protobuf 定义
-│   └── kpl_pb2.py               # 编译后的 Python 模块
 ├── data/                        # 输出数据
-│   ├── plates/                  # 267 板块数据
-│   │   ├── plates_{date}.json
-│   │   └── plates_{date}_summary.csv
-│   ├── sub_plates/              # 672 板块 - 个股数据
-│   │   ├── sub_plates_{date}.json
-│   │   └── sub_plates_{date}_summary.csv
-│   └── index/                   # 首页/58板块数据
-├── captures/                    # mitmproxy原始抓包
-└── _remove/                     # 待删除(278MB)
+│   ├── main_plate_info_{date}.csv   # 主板块汇总
+│   ├── sub_plate_info_{date}.csv    # 子板块关联
+│   └── stock_info_{date}.csv        # 个股详情
+├── captures/                    # mitmproxy 原始抓包（用于 token 刷新）
+└── .gitignore                   # 排除 .env / data / captures / __pycache__
 ```
