@@ -1,0 +1,16 @@
+# 环境配置（含Token密钥）
+.env
+
+# 运行时数据
+data/
+captures/
+
+# Python缓存
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# 历史目录
+.his/
